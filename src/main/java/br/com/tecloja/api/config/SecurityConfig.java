@@ -1,5 +1,6 @@
 package br.com.tecloja.api.config;
 
+import br.com.tecloja.api.config.security.JwtAuthenticationEntryPoint;
 import br.com.tecloja.api.config.security.JwtAuthenticationFilter;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -14,39 +15,72 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.web.cors.CorsConfiguration;
+import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
+
 import java.util.Arrays;
+import java.util.List;
 
 @Configuration
 @EnableWebSecurity
 public class SecurityConfig {
 
     private final JwtAuthenticationFilter jwtAuthenticationFilter;
+    private final JwtAuthenticationEntryPoint jwtAuthenticationEntryPoint;
 
-    public SecurityConfig(JwtAuthenticationFilter jwtAuthenticationFilter) {
+    public SecurityConfig(
+            JwtAuthenticationFilter jwtAuthenticationFilter,
+            JwtAuthenticationEntryPoint jwtAuthenticationEntryPoint
+    ) {
         this.jwtAuthenticationFilter = jwtAuthenticationFilter;
+        this.jwtAuthenticationEntryPoint = jwtAuthenticationEntryPoint;
     }
 
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
                 .cors(cors -> cors.configurationSource(corsConfigurationSource()))
-                .csrf(csrf -> csrf.disable()) // APIs stateless não necessitam de proteção CSRF
-                .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                .csrf(csrf -> csrf.disable())
+                .exceptionHandling(exception -> exception
+                        .authenticationEntryPoint(jwtAuthenticationEntryPoint)
+                )
+                .sessionManagement(session -> session
+                        .sessionCreationPolicy(SessionCreationPolicy.STATELESS)
+                )
                 .authorizeHttpRequests(auth -> auth
-                        // Rotas Públicas (liberados endpoints com prefixo de versão e H2 console)
-                        .requestMatchers("/api/v1/auth/login", "/h2-console/**", "/swagger-ui/**", "/v3/api-docs/**").permitAll()
-                        .requestMatchers(HttpMethod.GET, "/api/v1/produtos/**", "/api/v1/categorias/**").permitAll()
-                        // Rotas de Venda (Apenas Cliente/Usuário com ROLE_USER pode faturar)
+                        // ========== ENDPOINTS PÚBLICOS COMPLETOS ==========
+                        // Swagger UI - TODOS os recursos
+                        .requestMatchers(
+                                "/swagger-ui/**",
+                                "/swagger-ui.html",
+                                "/v3/api-docs/**",
+                                "/v3/api-docs",
+                                "/swagger-resources/**",
+                                "/webjars/**"
+                        ).permitAll()
+
+                        // H2 Console
+                        .requestMatchers("/h2-console/**").permitAll()
+
+                        // Autenticação
+                        .requestMatchers("/api/v1/auth/login").permitAll()
+
+                        // Endpoints públicos de consulta (GET)
+                        .requestMatchers(HttpMethod.GET, "/api/v1/produtos/**").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/v1/categorias/**").permitAll()
+
+                        // ========== ENDPOINTS PROTEGIDOS ==========
+                        // Pedidos - requer ROLE_USER
                         .requestMatchers("/api/v1/pedidos/**").hasRole("USER")
-                        // Rotas Administrativas (Apenas ADMIN pode cadastrar, editar e excluir)
+
+                        // Produtos - operações de escrita requerem ROLE_ADMIN
                         .requestMatchers(HttpMethod.POST, "/api/v1/produtos/**").hasRole("ADMIN")
                         .requestMatchers(HttpMethod.PUT, "/api/v1/produtos/**").hasRole("ADMIN")
                         .requestMatchers(HttpMethod.DELETE, "/api/v1/produtos/**").hasRole("ADMIN")
 
+                        // Qualquer outra requisição precisa estar autenticada
                         .anyRequest().authenticated()
                 )
-                // sameOrigin: permite frames apenas da mesma origem (seguro para H2 console local)
                 .headers(headers -> headers.frameOptions(frame -> frame.sameOrigin()))
                 .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
 
@@ -63,21 +97,30 @@ public class SecurityConfig {
         return config.getAuthenticationManager();
     }
 
-    /**
-     * Fonte de configuração CORS usada diretamente pelo Spring Security 6.
-     * Registrada via .cors(cors -> cors.configurationSource(...)) — sem necessidade
-     * de um Bean CorsFilter separado (que causaria dupla interceptação).
-     */
     @Bean
-    public UrlBasedCorsConfigurationSource corsConfigurationSource() {
+    public CorsConfigurationSource corsConfigurationSource() {
+        CorsConfiguration configuration = new CorsConfiguration();
+        configuration.setAllowedOriginPatterns(Arrays.asList(
+                "http://localhost:4200",
+                "http://localhost:8080",
+                "https://*.netlify.app"
+        ));
+        configuration.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"));
+        configuration.setAllowedHeaders(Arrays.asList(
+                "Authorization",
+                "Content-Type",
+                "X-Requested-With",
+                "Accept",
+                "Origin",
+                "Access-Control-Request-Method",
+                "Access-Control-Request-Headers"
+        ));
+        configuration.setExposedHeaders(List.of("Authorization"));
+        configuration.setAllowCredentials(true);
+        configuration.setMaxAge(3600L);
+
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
-        CorsConfiguration config = new CorsConfiguration();
-        config.setAllowCredentials(true);
-        // Permite a origem de Dev local do Angular e subdomínios de produção da Netlify
-        config.setAllowedOriginPatterns(Arrays.asList("http://localhost:4200", "https://*.netlify.app"));
-        config.setAllowedHeaders(Arrays.asList("Origin", "Content-Type", "Accept", "Authorization"));
-        config.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "OPTIONS"));
-        source.registerCorsConfiguration("/**", config);
+        source.registerCorsConfiguration("/**", configuration);
         return source;
     }
 }

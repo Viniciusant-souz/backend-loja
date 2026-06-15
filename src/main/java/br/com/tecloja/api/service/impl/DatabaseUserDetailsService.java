@@ -9,6 +9,7 @@ import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+
 import java.util.stream.Collectors;
 
 @Service
@@ -21,7 +22,7 @@ public class DatabaseUserDetailsService implements UserDetailsService {
     }
 
     @Override
-    @Transactional(readOnly = true) // Garante sessão JPA ativa para carregar os papéis do usuário
+    @Transactional(readOnly = true)
     public UserDetails loadUserByUsername(String username) throws UsernameNotFoundException {
         Usuario usuario = usuarioRepository.findByUsername(username)
                 .orElseThrow(() -> new UsernameNotFoundException("Usuário não cadastrado: " + username));
@@ -30,7 +31,7 @@ public class DatabaseUserDetailsService implements UserDetailsService {
                 usuario.getUsername(),
                 usuario.getSenha(),
                 usuario.getPapeis().stream()
-                        .map(papel -> new SimpleGrantedAuthority(papel.getNome()))
+                        .map(papel -> new SimpleGrantedAuthority("ROLE_" + papel.getNome()))
                         .collect(Collectors.toList())
         );
     }
